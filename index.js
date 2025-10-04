@@ -13,7 +13,7 @@ const fetch = (...args) =>
 
 const app = express();
 const PORT = 3000;
-
+const axios = require("axios");
 // Schedule job to run every minute
 cron.schedule("* * * * *", async () => {
 	console.log("Running giveaway auto-draw job...");
@@ -173,4 +173,41 @@ app.get("/health", (req, res) => {
 	res
 		.status(200)
 		.json({ status: "OK", message: "Roobet Leaderboard API is running" });
+});
+// 🧠 Fetch leaderboard data directly from Chicken.gg API
+app.get("/api/chicken", async (req, res) => {
+	try {
+		const { minTime, maxTime } = req.query;
+		let url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY_CHK}`;
+
+		if (minTime) url += `&minTime=${minTime}`;
+		if (maxTime) url += `&maxTime=${maxTime}`;
+
+		const { data } = await axios.get(url);
+
+		const referrals = Array.isArray(data) ? data : data.referrals;
+
+		if (!Array.isArray(referrals)) {
+			console.error("Unexpected response:", data);
+			return res.status(400).json({ error: "Unexpected API response" });
+		}
+
+		if (referrals.length === 0) {
+			return res.json({ message: "No referrals found yet", referrals: [] });
+		}
+
+		// 🏆 Sort by XP (descending)
+		const sorted = referrals.sort((a, b) => b.xp - a.xp);
+
+		// Limit to top 50 users
+		const leaderboard = sorted.slice(0, 50);
+
+		res.json(leaderboard);
+	} catch (error) {
+		console.error("❌ Error fetching leaderboard:", error.message);
+		res.status(500).json({
+			error: "Failed to fetch leaderboard",
+			message: error.response?.data || error.message,
+		});
+	}
 });
