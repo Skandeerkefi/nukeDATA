@@ -14,6 +14,7 @@ const fetch = (...args) =>
 const app = express();
 const PORT = 3000;
 const axios = require("axios");
+const Referral = require("./models/Referral");
 // Schedule job to run every minute
 cron.schedule("* * * * *", async () => {
 	console.log("Running giveaway auto-draw job...");
@@ -174,40 +175,44 @@ app.get("/health", (req, res) => {
 		.status(200)
 		.json({ status: "OK", message: "Roobet Leaderboard API is running" });
 });
-// 🧠 Fetch leaderboard data directly from Chicken.gg API
-app.get("/api/chicken", async (req, res) => {
+
+// 🧠 Fetch referrals from Chicken.gg
+async function fetchReferrals() {
 	try {
-		const { minTime, maxTime } = req.query;
-		let url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY_CHK}`;
-
-		if (minTime) url += `&minTime=${minTime}`;
-		if (maxTime) url += `&maxTime=${maxTime}`;
-
+		const url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY}`;
 		const { data } = await axios.get(url);
 
-		const referrals = Array.isArray(data) ? data : data.referrals;
+		if (!data || !Array.isArray(data)) return;
 
-		if (!Array.isArray(referrals)) {
-			console.error("Unexpected response:", data);
-			return res.status(400).json({ error: "Unexpected API response" });
+		for (const ref of data) {
+			// Upsert to prevent duplicates
+			await Referral.findOneAndUpdate(
+				{ userId: ref.userId },
+				{
+					username: ref.username,
+					xp: ref.xp,
+					referredAt: ref.referredAt,
+				},
+				{ upsert: true, new: true }
+			);
 		}
 
-		if (referrals.length === 0) {
-			return res.json({ message: "No referrals found yet", referrals: [] });
-		}
+		console.log("Referral data updated:", data.length);
+	} catch (err) {
+		console.error("Error fetching referrals:", err.message);
+	}
+}
 
-		// 🏆 Sort by XP (descending)
-		const sorted = referrals.sort((a, b) => b.xp - a.xp);
+// 🕓 Update every 15 minutes
+cron.schedule("*/15 * * * *", fetchReferrals);
 
-		// Limit to top 50 users
-		const leaderboard = sorted.slice(0, 50);
+// 🧮 XP Leaderboard API
+app.get("/api/chk", async (req, res) => {
+	try {
+		const leaderboard = await Referral.find().sort({ xp: -1 }).limit(50);
 
 		res.json(leaderboard);
-	} catch (error) {
-		console.error("❌ Error fetching leaderboard:", error.message);
-		res.status(500).json({
-			error: "Failed to fetch leaderboard",
-			message: error.response?.data || error.message,
-		});
+	} catch (err) {
+		res.status(500).json({ error: err.message });
 	}
 });
