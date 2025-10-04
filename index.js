@@ -177,17 +177,21 @@ app.get("/health", (req, res) => {
 });
 
 // 🧠 Fetch referrals from Chicken.gg
-async function fetchReferrals() {
+async function fetchReferrals(minTime = null, maxTime = null) {
 	try {
-		const url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY}`;
+		let url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY}`;
+
+		if (minTime && maxTime) {
+			url += `&minTime=${minTime}&maxTime=${maxTime}`;
+		}
+
 		const { data } = await axios.get(url);
 
 		if (!data || !Array.isArray(data)) return;
 
 		for (const ref of data) {
-			// Upsert to prevent duplicates
 			await Referral.findOneAndUpdate(
-				{ userId: ref.userId },
+				{ userId: ref.userId, referredAt: ref.referredAt }, // unique by user & timestamp
 				{
 					username: ref.username,
 					xp: ref.xp,
@@ -197,7 +201,7 @@ async function fetchReferrals() {
 			);
 		}
 
-		console.log("Referral data updated:", data.length);
+		console.log(`Referral data updated: ${data.length} entries`);
 	} catch (err) {
 		console.error("Error fetching referrals:", err.message);
 	}
@@ -209,7 +213,17 @@ cron.schedule("*/15 * * * *", fetchReferrals);
 // 🧮 XP Leaderboard API
 app.get("/api/chk", async (req, res) => {
 	try {
-		const leaderboard = await Referral.find().sort({ xp: -1 }).limit(50);
+		const { minTime, maxTime } = req.query;
+
+		let filter = {};
+		if (minTime && maxTime) {
+			filter.referredAt = {
+				$gte: parseInt(minTime),
+				$lte: parseInt(maxTime),
+			};
+		}
+
+		const leaderboard = await Referral.find(filter).sort({ xp: -1 }).limit(50);
 
 		res.json(leaderboard);
 	} catch (err) {
