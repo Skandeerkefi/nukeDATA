@@ -52,10 +52,7 @@ app.use((req, res, next) => {
 // CORS Middleware
 const allowedOrigins = [
 	"http://localhost:5173",
-	"https://king-eta-cyan.vercel.app",
 	"https://degenbomber.vercel.app",
-	"https://kingrewardsroobet.vercel.app",
-	"https://mister-tee.vercel.app/Leaderboards",
 ];
 
 app.use(
