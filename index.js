@@ -1,3 +1,4 @@
+// server.js
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
@@ -5,37 +6,74 @@ const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const cron = require("node-cron");
-const { drawWinnerAuto } = require("./controllers/gwsController"); // You create this
-dotenv.config();
-const GWS = require("./models/GWS");
+const axios = require("axios");
 const fetch = (...args) =>
 	import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
-const app = express();
-const PORT = 3000;
-const axios = require("axios");
+dotenv.config();
+
+// Controllers & Models
+const { drawWinnerAuto } = require("./controllers/gwsController");
+const GWS = require("./models/GWS");
 const Referral = require("./models/Referral");
-// Schedule job to run every minute
-cron.schedule("* * * * *", async () => {
-	console.log("Running giveaway auto-draw job...");
-	const now = new Date();
+const { User } = require("./models/User");
+const { SlotCall } = require("./models/SlotCall");
 
-	try {
-		const giveawaysToDraw = await GWS.find({
-			state: "active",
-			endTime: { $lte: now },
-		}).populate("participants");
+// Middleware
+const { verifyToken, isAdmin } = require("./middleware/auth");
 
-		for (const gws of giveawaysToDraw) {
-			await drawWinnerAuto(gws); // call the helper above
-			console.log(`Giveaway ${gws._id} winner drawn automatically.`);
-		}
-	} catch (err) {
-		console.error("Error during auto draw:", err);
+// Routes
+const slotCallRoutes = require("./routes/slotCallRoutes");
+const gwsRoutes = require("./routes/gwsRoutes");
+const leaderboardRoutes = require("./routes/leaderboard");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ✅ Allowed origins for CORS
+const allowedOrigins = [
+	"http://localhost:5173",
+	"https://degenbomber.vercel.app",
+];
+
+// CORS Middleware
+app.use((req, res, next) => {
+	const origin = req.headers.origin;
+	if (allowedOrigins.includes(origin)) {
+		res.header("Access-Control-Allow-Origin", origin);
+		res.header(
+			"Access-Control-Allow-Methods",
+			"GET, POST, PUT, PATCH, DELETE, OPTIONS"
+		);
+		res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+		res.header("Access-Control-Allow-Credentials", "true");
 	}
+	if (req.method === "OPTIONS") {
+		return res.sendStatus(200); // handle preflight
+	}
+	next();
 });
 
+app.use(express.json());
+
+// ----------------------
+// MongoDB Connection
+// ----------------------
+mongoose.set("strictQuery", true);
+mongoose.set("bufferCommands", false);
+
+mongoose
+	.connect(process.env.MONGO_URI, {
+		useNewUrlParser: true,
+		useUnifiedTopology: true,
+		serverSelectionTimeoutMS: 10000,
+	})
+	.then(() => console.log("✅ MongoDB connected"))
+	.catch((err) => console.error("❌ MongoDB connection error:", err));
+
+// ----------------------
 // Logging Middleware
+// ----------------------
 app.use((req, res, next) => {
 	console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
 	const originalSend = res.send;
@@ -49,61 +87,64 @@ app.use((req, res, next) => {
 	next();
 });
 
-// CORS Middleware
-const allowedOrigins = [
-	"http://localhost:5173",
-	"https://degenbomber.vercel.app",
-];
+// ----------------------
+// Cron Jobs
+// ----------------------
 
-app.use(
-	cors({
-		origin: function (origin, callback) {
-			// allow requests with no origin like curl or Postman
-			if (!origin) return callback(null, true);
-			if (allowedOrigins.includes(origin)) {
-				return callback(null, true);
-			} else {
-				return callback(new Error("CORS policy: This origin is not allowed"));
-			}
-		},
-		methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-		allowedHeaders: ["Content-Type", "Authorization"],
-		credentials: true,
-	})
-);
+// Auto-draw giveaways every minute
+cron.schedule("* * * * *", async () => {
+	console.log("Running giveaway auto-draw job...");
+	const now = new Date();
+	try {
+		const giveawaysToDraw = await GWS.find({
+			state: "active",
+			endTime: { $lte: now },
+		}).populate("participants");
 
-app.use(express.json());
+		for (const gws of giveawaysToDraw) {
+			await drawWinnerAuto(gws);
+			console.log(`Giveaway ${gws._id} winner drawn automatically.`);
+		}
+	} catch (err) {
+		console.error("Error during auto draw:", err);
+	}
+});
 
-// MongoDB Connection
-mongoose.set("strictQuery", true); // optional but recommended
-mongoose.set("bufferCommands", false); // disables buffering to avoid hanging queries
+// Fetch referrals from Chicken.gg every 15 minutes
+async function fetchReferrals(minTime = null, maxTime = null) {
+	try {
+		let url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY}`;
+		if (minTime && maxTime) url += `&minTime=${minTime}&maxTime=${maxTime}`;
+		const { data } = await axios.get(url);
+		if (!data || !Array.isArray(data)) return;
 
-mongoose
-	.connect(process.env.MONGO_URI, {
-		useNewUrlParser: true,
-		useUnifiedTopology: true,
-		serverSelectionTimeoutMS: 10000, // 10 seconds timeout
-	})
-	.then(() => console.log("✅ MongoDB connected"))
-	.catch((err) => console.error("❌ MongoDB connection error:", err));
+		for (const ref of data) {
+			await Referral.findOneAndUpdate(
+				{ userId: ref.userId, referredAt: ref.referredAt },
+				{
+					username: ref.username,
+					xp: ref.xp,
+					referredAt: ref.referredAt,
+				},
+				{ upsert: true, new: true }
+			);
+		}
+		console.log(`Referral data updated: ${data.length} entries`);
+	} catch (err) {
+		console.error("Error fetching referrals:", err.message);
+	}
+}
+cron.schedule("*/15 * * * *", fetchReferrals);
 
-// Models
-const { User } = require("./models/User");
-const { SlotCall } = require("./models/SlotCall");
-
-// Middleware
-const { verifyToken, isAdmin } = require("./middleware/auth");
-
+// ----------------------
 // Routes
-const slotCallRoutes = require("./routes/slotCallRoutes");
+// ----------------------
 
 // Auth Routes
 app.post("/api/auth/register", async (req, res) => {
 	const { kickUsername, rainbetUsername, password, confirmPassword } = req.body;
-
-	if (password !== confirmPassword) {
+	if (password !== confirmPassword)
 		return res.status(400).json({ message: "Passwords do not match." });
-	}
 
 	const existing = await User.findOne({ kickUsername });
 	const existingRainbet = await User.findOne({ rainbetUsername });
@@ -113,13 +154,11 @@ app.post("/api/auth/register", async (req, res) => {
 	const hashed = await bcrypt.hash(password, 10);
 	const newUser = new User({ kickUsername, rainbetUsername, password: hashed });
 	await newUser.save();
-
 	res.status(201).json({ message: "User registered." });
 });
 
 app.post("/api/auth/login", async (req, res) => {
 	const { kickUsername, password } = req.body;
-
 	const user = await User.findOne({ kickUsername });
 	if (!user) return res.status(404).json({ message: "User not found." });
 
@@ -141,18 +180,21 @@ app.post("/api/auth/login", async (req, res) => {
 // Slot Call Routes
 app.use("/api/slot-calls", slotCallRoutes);
 
+// GWS Routes
+app.use("/api/gws", gwsRoutes);
+
+// Leaderboard Routes
+app.use("/api/leaderboard", leaderboardRoutes);
+
 // Affiliates Route
 app.get("/api/affiliates", async (req, res) => {
 	const { start_at, end_at } = req.query;
-
-	if (!start_at || !end_at) {
+	if (!start_at || !end_at)
 		return res
 			.status(400)
 			.json({ error: "Missing start_at or end_at parameter" });
-	}
 
 	const url = `https://services.rainbet.com/v1/external/affiliates?start_at=${start_at}&end_at=${end_at}&key=${process.env.RAINBET_API_KEY}`;
-
 	try {
 		const response = await fetch(url);
 		const content = await response.text();
@@ -163,63 +205,10 @@ app.get("/api/affiliates", async (req, res) => {
 	}
 });
 
-const gwsRoutes = require("./routes/gwsRoutes");
-app.use("/api/gws", gwsRoutes);
-
-// Start Server
-app.listen(PORT, () =>
-	console.log(`✅ Server is running at http://localhost:${PORT}`)
-);
-const leaderboardRoutes = require("./routes/leaderboard");
-// Routes
-app.use("/api/leaderboard", leaderboardRoutes);
-
-// Basic health check endpoint
-app.get("/health", (req, res) => {
-	res
-		.status(200)
-		.json({ status: "OK", message: "Roobet Leaderboard API is running" });
-});
-
-// 🧠 Fetch referrals from Chicken.gg
-async function fetchReferrals(minTime = null, maxTime = null) {
-	try {
-		let url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY}`;
-
-		if (minTime && maxTime) {
-			url += `&minTime=${minTime}&maxTime=${maxTime}`;
-		}
-
-		const { data } = await axios.get(url);
-
-		if (!data || !Array.isArray(data)) return;
-
-		for (const ref of data) {
-			await Referral.findOneAndUpdate(
-				{ userId: ref.userId, referredAt: ref.referredAt }, // unique by user & timestamp
-				{
-					username: ref.username,
-					xp: ref.xp,
-					referredAt: ref.referredAt,
-				},
-				{ upsert: true, new: true }
-			);
-		}
-
-		console.log(`Referral data updated: ${data.length} entries`);
-	} catch (err) {
-		console.error("Error fetching referrals:", err.message);
-	}
-}
-
-// 🕓 Update every 15 minutes
-cron.schedule("*/15 * * * *", fetchReferrals);
-
-// 🧮 XP Leaderboard API
+// XP Leaderboard API
 app.get("/api/chk", async (req, res) => {
 	try {
 		const { minTime, maxTime } = req.query;
-
 		let filter = {};
 		if (minTime && maxTime) {
 			filter.referredAt = {
@@ -227,11 +216,23 @@ app.get("/api/chk", async (req, res) => {
 				$lte: parseInt(maxTime),
 			};
 		}
-
 		const leaderboard = await Referral.find(filter).sort({ xp: -1 }).limit(50);
-
 		res.json(leaderboard);
 	} catch (err) {
 		res.status(500).json({ error: err.message });
 	}
 });
+
+// Health Check
+app.get("/health", (req, res) => {
+	res
+		.status(200)
+		.json({ status: "OK", message: "Roobet Leaderboard API is running" });
+});
+
+// ----------------------
+// Start Server
+// ----------------------
+app.listen(PORT, () =>
+	console.log(`✅ Server is running at http://localhost:${PORT}`)
+);
