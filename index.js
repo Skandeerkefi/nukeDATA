@@ -30,36 +30,44 @@ const leaderboardRoutes = require("./routes/leaderboard");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ Allowed origins for CORS
+// ----------------------
+// CORS Middleware
+// ----------------------
 const allowedOrigins = [
 	"http://localhost:5173",
 	"https://degenbomber.vercel.app",
-	"https://nukedata-production.up.railway.app",
 ];
 
-// CORS Middleware
-app.use((req, res, next) => {
-	const origin = req.headers.origin;
-	if (allowedOrigins.includes(origin)) {
-		res.header("Access-Control-Allow-Origin", origin);
-		res.header(
-			"Access-Control-Allow-Methods",
-			"GET, POST, PUT, PATCH, DELETE, OPTIONS"
-		);
-		res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-		res.header("Access-Control-Allow-Credentials", "true");
-	}
-	if (req.method === "OPTIONS") {
-		return res.sendStatus(200); // handle preflight
-	}
-	next();
-});
+app.use(
+	cors({
+		origin: function (origin, callback) {
+			// allow requests with no origin like curl or Postman
+			if (!origin) return callback(null, true);
+			if (allowedOrigins.includes(origin)) {
+				return callback(null, true);
+			} else {
+				return callback(new Error("CORS policy: This origin is not allowed"));
+			}
+		},
+		methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+		allowedHeaders: ["Content-Type", "Authorization"],
+		credentials: true,
+	})
+);
 
+// ----------------------
+// JSON Parsing Middleware
+// ----------------------
 app.use(express.json());
 
 // ----------------------
 // MongoDB Connection
 // ----------------------
+if (!process.env.MONGO_URI) {
+	console.error("❌ MONGO_URI is not defined in .env!");
+	process.exit(1);
+}
+
 mongoose.set("strictQuery", true);
 mongoose.set("bufferCommands", false);
 
@@ -143,39 +151,53 @@ cron.schedule("*/15 * * * *", fetchReferrals);
 
 // Auth Routes
 app.post("/api/auth/register", async (req, res) => {
-	const { kickUsername, rainbetUsername, password, confirmPassword } = req.body;
-	if (password !== confirmPassword)
-		return res.status(400).json({ message: "Passwords do not match." });
+	try {
+		const { kickUsername, rainbetUsername, password, confirmPassword } =
+			req.body;
+		if (password !== confirmPassword)
+			return res.status(400).json({ message: "Passwords do not match." });
 
-	const existing = await User.findOne({ kickUsername });
-	const existingRainbet = await User.findOne({ rainbetUsername });
-	if (existing || existingRainbet)
-		return res.status(400).json({ message: "Username already exists." });
+		const existing = await User.findOne({ kickUsername });
+		const existingRainbet = await User.findOne({ rainbetUsername });
+		if (existing || existingRainbet)
+			return res.status(400).json({ message: "Username already exists." });
 
-	const hashed = await bcrypt.hash(password, 10);
-	const newUser = new User({ kickUsername, rainbetUsername, password: hashed });
-	await newUser.save();
-	res.status(201).json({ message: "User registered." });
+		const hashed = await bcrypt.hash(password, 10);
+		const newUser = new User({
+			kickUsername,
+			rainbetUsername,
+			password: hashed,
+		});
+		await newUser.save();
+		res.status(201).json({ message: "User registered." });
+	} catch (err) {
+		res.status(500).json({ message: err.message });
+	}
 });
 
 app.post("/api/auth/login", async (req, res) => {
-	const { kickUsername, password } = req.body;
-	const user = await User.findOne({ kickUsername });
-	if (!user) return res.status(404).json({ message: "User not found." });
+	try {
+		const { kickUsername, password } = req.body;
+		const user = await User.findOne({ kickUsername });
+		if (!user) return res.status(404).json({ message: "User not found." });
 
-	const match = await bcrypt.compare(password, user.password);
-	if (!match) return res.status(401).json({ message: "Invalid credentials." });
+		const match = await bcrypt.compare(password, user.password);
+		if (!match)
+			return res.status(401).json({ message: "Invalid credentials." });
 
-	const token = jwt.sign(
-		{ id: user._id, role: user.role, kickUsername: user.kickUsername },
-		process.env.JWT_SECRET,
-		{ expiresIn: "7d" }
-	);
+		const token = jwt.sign(
+			{ id: user._id, role: user.role, kickUsername: user.kickUsername },
+			process.env.JWT_SECRET,
+			{ expiresIn: "7d" }
+		);
 
-	res.json({
-		token,
-		user: { id: user._id, kickUsername: user.kickUsername, role: user.role },
-	});
+		res.json({
+			token,
+			user: { id: user._id, kickUsername: user.kickUsername, role: user.role },
+		});
+	} catch (err) {
+		res.status(500).json({ message: err.message });
+	}
 });
 
 // Slot Call Routes
