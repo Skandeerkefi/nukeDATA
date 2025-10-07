@@ -1,22 +1,18 @@
 import axios from "axios";
 import dotenv from "dotenv";
-import Referral from "../models/Referral.js"; // adjust path
+import Referral from "../models/Referral.js";
 
 dotenv.config();
 
-export async function fetchReferrals(minTime = null, maxTime = null) {
+export async function fetchReferrals() {
 	try {
-		let url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY}`;
-		if (minTime && maxTime) {
-			url += `&minTime=${minTime}&maxTime=${maxTime}`;
-		}
-
-		console.log("🌐 Fetching from:", url);
+		const url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY}`;
+		console.log("🌐 Fetching referrals from Chicken API:", url);
 
 		const { data } = await axios.get(url);
 
 		if (!data || !Array.isArray(data.referrals)) {
-			console.log("⚠️ No referrals array in API response:", data);
+			console.warn("⚠️ No referrals array in API response:", data);
 			return;
 		}
 

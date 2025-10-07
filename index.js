@@ -111,8 +111,7 @@ cron.schedule("* * * * *", async () => {
 	}
 });
 
-// Fetch referrals from Chicken.gg every 15 minutes
-cron.schedule("*/15 * * * *", fetchReferrals);
+
 
 // ----------------------
 // Auth Routes
@@ -195,16 +194,16 @@ app.get("/api/affiliates", async (req, res) => {
 });
 
 // XP Leaderboard API
+// XP Leaderboard API
 app.get("/api/chk", async (req, res) => {
 	try {
 		const { minTime, maxTime } = req.query;
 		let filter = {};
 
-		if (minTime && maxTime) {
-			filter.referredAt = {
-				$gte: parseInt(minTime),
-				$lte: parseInt(maxTime),
-			};
+		if (minTime || maxTime) {
+			filter.referredAt = {};
+			if (minTime) filter.referredAt.$gte = parseInt(minTime);
+			if (maxTime) filter.referredAt.$lte = parseInt(maxTime);
 		}
 
 		const leaderboard = await Referral.find(filter)
@@ -221,6 +220,10 @@ app.get("/api/chk", async (req, res) => {
 // Health Check
 app.get("/health", (req, res) => {
 	res.status(200).json({ status: "OK", message: "KingDATA API is running" });
+});
+cron.schedule("*/5 * * * *", async () => {
+	console.log("🕔 Running scheduled fetch for Chicken referrals...");
+	await fetchReferrals();
 });
 
 // ----------------------
