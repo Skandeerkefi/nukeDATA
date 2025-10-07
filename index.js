@@ -194,7 +194,7 @@ app.get("/api/affiliates", async (req, res) => {
 // XP Leaderboard API
 // XP Leaderboard API
 app.use("/api/chk", chkRoutes);
-
+app.use("/api/referrals", referralRoutes);
 // Health Check
 app.get("/health", (req, res) => {
 	res.status(200).json({ status: "OK", message: "KingDATA API is running" });
