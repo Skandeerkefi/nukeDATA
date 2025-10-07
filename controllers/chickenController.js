@@ -1,26 +1,33 @@
 const ChickenReferral = require("../models/ChickenReferral");
-const fetch = (...args) =>
-	import("node-fetch").then(({ default: fetch }) => fetch(...args));
+const fetch = require("node-fetch"); // node-fetch v2
 
 const API_KEY = process.env.API_KEY;
 
 async function fetchAndStoreChickenData() {
+	if (!API_KEY) {
+		console.error("❌ API_KEY is not defined!");
+		return;
+	}
+
 	try {
-		const now = Date.now();
-		const fiveMinAgo = now - 1 * 60 * 1000;
+		const url = `https://affiliates.chicken.gg/v1/referrals?key=${API_KEY}`;
+		console.log("Fetching Chicken API:", url);
 
-		const url = `https://affiliates.chicken.gg/v1/referrals?key=${process.env.API_KEY}&minTime=${fiveMinAgo}&maxTime=${now}`;
 		const response = await fetch(url);
-		const data = await response.json();
+		const text = await response.text();
 
-		const referrals = data.referrals;
-		if (!Array.isArray(referrals)) {
-			console.error("❌ Unexpected API response format");
+		console.log("Chicken API raw response:", text);
+
+		const data = JSON.parse(text);
+
+		if (!data.referrals || !Array.isArray(data.referrals)) {
+			console.error("❌ Unexpected Chicken API response format");
 			return;
 		}
 
-		for (const item of referrals) {
+		for (const item of data.referrals) {
 			const { userId, displayName, xpEarned, acquireTime } = item;
+
 			await ChickenReferral.findOneAndUpdate(
 				{ userId },
 				{
@@ -36,16 +43,17 @@ async function fetchAndStoreChickenData() {
 			`✅ Chicken leaderboard updated at ${new Date().toISOString()}`
 		);
 	} catch (err) {
-		console.error("❌ Error fetching Chicken data:", err.message);
+		console.error("❌ Error fetching Chicken data:", err);
 	}
 }
 
-// Controller for frontend route
 async function getLeaderboard(req, res) {
 	try {
-		const leaderboard = await ChickenReferral.find().sort({ xp: -1 }).limit(50); // top 50
+		const leaderboard = await ChickenReferral.find().sort({ xp: -1 }).limit(50);
+
 		res.json(leaderboard);
 	} catch (err) {
+		console.error("❌ Leaderboard fetch error:", err);
 		res.status(500).json({ error: err.message });
 	}
 }

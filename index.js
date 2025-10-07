@@ -1,29 +1,32 @@
 // server.js
 const express = require("express");
 const cors = require("cors");
-const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const cron = require("node-cron");
-const { fetchAndStoreChickenData } = require("./controllers/chickenController");
-dotenv.config();
+const fetch = require("node-fetch"); // Use node-fetch in Node.js
+require("dotenv").config();
 
-// Controllers & Models
+const { fetchAndStoreChickenData } = require("./controllers/chickenController");
 const { drawWinnerAuto } = require("./controllers/gwsController");
 const GWS = require("./models/GWS");
 const { User } = require("./models/User");
 const { SlotCall } = require("./models/SlotCall");
 
-// Middleware
-const { verifyToken, isAdmin } = require("./middleware/auth");
-
-// Routes
 const slotCallRoutes = require("./routes/slotCallRoutes");
 const gwsRoutes = require("./routes/gwsRoutes");
+const chickenRoutes = require("./routes/chickenRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ----------------------
+// Check critical env vars
+// ----------------------
+if (!process.env.MONGO_URI) throw new Error("MONGO_URI is not defined!");
+if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not defined!");
+if (!process.env.API_KEY) throw new Error("API_KEY is not defined!");
 
 // ----------------------
 // CORS Middleware
@@ -33,16 +36,12 @@ const allowedOrigins = [
 	"https://degenbomber.vercel.app",
 	"https://nukedata-production.up.railway.app",
 ];
-
 app.use(
 	cors({
-		origin: function (origin, callback) {
-			if (!origin) return callback(null, true);
-			if (allowedOrigins.includes(origin)) {
+		origin: (origin, callback) => {
+			if (!origin || allowedOrigins.includes(origin))
 				return callback(null, true);
-			} else {
-				return callback(new Error("CORS policy: This origin is not allowed"));
-			}
+			callback(new Error("CORS policy: This origin is not allowed"));
 		},
 		methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 		allowedHeaders: ["Content-Type", "Authorization"],
@@ -58,22 +57,54 @@ app.use(express.json());
 // ----------------------
 // MongoDB Connection
 // ----------------------
-if (!process.env.MONGO_URI) {
-	console.error("❌ MONGO_URI is not defined in .env!");
-	process.exit(1);
-}
-
 mongoose.set("strictQuery", true);
 mongoose.set("bufferCommands", false);
 
+// server.js snippet
 mongoose
-	.connect(process.env.MONGO_URI, {
-		useNewUrlParser: true,
-		useUnifiedTopology: true,
-		serverSelectionTimeoutMS: 10000,
+	.connect(process.env.MONGO_URI)
+	.then(async () => {
+		console.log("✅ MongoDB connected");
+
+		// Initial fetch after connection is ready
+		try {
+			await fetchAndStoreChickenData();
+			console.log("✅ Initial Chicken leaderboard populated");
+		} catch (err) {
+			console.error("❌ Initial fetch failed:", err);
+		}
+
+		// Start cron jobs AFTER DB is connected
+		cron.schedule("*/5 * * * *", async () => {
+			console.log("🐔 Running Chicken leaderboard update...");
+			try {
+				await fetchAndStoreChickenData();
+			} catch (err) {
+				console.error("❌ Error fetching Chicken data:", err);
+			}
+		});
+
+		cron.schedule("* * * * *", async () => {
+			console.log("🎁 Running giveaway auto-draw job...");
+			const now = new Date();
+			try {
+				const giveawaysToDraw = await GWS.find({
+					state: "active",
+					endTime: { $lte: now },
+				}).populate("participants");
+				for (const gws of giveawaysToDraw) {
+					await drawWinnerAuto(gws);
+					console.log(`Giveaway ${gws._id} winner drawn automatically.`);
+				}
+			} catch (err) {
+				console.error("❌ Error during auto draw:", err);
+			}
+		});
 	})
-	.then(() => console.log("✅ MongoDB connected"))
-	.catch((err) => console.error("❌ MongoDB connection error:", err));
+	.catch((err) => {
+		console.error("❌ MongoDB connection error:", err);
+		process.exit(1);
+	});
 
 // ----------------------
 // Logging Middleware
@@ -91,39 +122,44 @@ app.use((req, res, next) => {
 	next();
 });
 
-// Update Chicken leaderboard every 1 minute
-cron.schedule("*/1 * * * *", async () => {
-	console.log("Running Chicken leaderboard update...");
-	await fetchAndStoreChickenData();
-});
-const chickenRoutes = require("./routes/chickenRoutes");
-app.use("/api/chicken", chickenRoutes);
 // ----------------------
 // Cron Jobs
 // ----------------------
 
+// Chicken leaderboard update every 5 minutes
+cron.schedule("*/5 * * * *", async () => {
+	console.log("🐔 Running Chicken leaderboard update...");
+	try {
+		await fetchAndStoreChickenData();
+		console.log("✅ Chicken leaderboard updated successfully.");
+	} catch (err) {
+		console.error("❌ Error fetching Chicken data:", err);
+	}
+});
+
 // Auto-draw giveaways every minute
 cron.schedule("* * * * *", async () => {
-	console.log("Running giveaway auto-draw job...");
-	const now = new Date();
+	console.log("🎁 Running giveaway auto-draw job...");
 	try {
 		const giveawaysToDraw = await GWS.find({
 			state: "active",
-			endTime: { $lte: now },
+			endTime: { $lte: new Date() },
 		}).populate("participants");
-
 		for (const gws of giveawaysToDraw) {
 			await drawWinnerAuto(gws);
 			console.log(`Giveaway ${gws._id} winner drawn automatically.`);
 		}
 	} catch (err) {
-		console.error("Error during auto draw:", err);
+		console.error("❌ Error during auto draw:", err);
 	}
 });
 
 // ----------------------
 // Routes
 // ----------------------
+app.use("/api/slot-calls", slotCallRoutes);
+app.use("/api/gws", gwsRoutes);
+app.use("/api/chicken", chickenRoutes);
 
 // Auth Routes
 app.post("/api/auth/register", async (req, res) => {
@@ -133,9 +169,10 @@ app.post("/api/auth/register", async (req, res) => {
 		if (password !== confirmPassword)
 			return res.status(400).json({ message: "Passwords do not match." });
 
-		const existing = await User.findOne({ kickUsername });
-		const existingRainbet = await User.findOne({ rainbetUsername });
-		if (existing || existingRainbet)
+		const existing = await User.findOne({
+			$or: [{ kickUsername }, { rainbetUsername }],
+		});
+		if (existing)
 			return res.status(400).json({ message: "Username already exists." });
 
 		const hashed = await bcrypt.hash(password, 10);
@@ -166,7 +203,6 @@ app.post("/api/auth/login", async (req, res) => {
 			process.env.JWT_SECRET,
 			{ expiresIn: "7d" }
 		);
-
 		res.json({
 			token,
 			user: { id: user._id, kickUsername: user.kickUsername, role: user.role },
@@ -176,39 +212,18 @@ app.post("/api/auth/login", async (req, res) => {
 	}
 });
 
-// Slot Call Routes
-app.use("/api/slot-calls", slotCallRoutes);
-
-// GWS Routes
-app.use("/api/gws", gwsRoutes);
-
-// Affiliates Route
-app.get("/api/affiliates", async (req, res) => {
-	const { start_at, end_at } = req.query;
-	if (!start_at || !end_at)
-		return res
-			.status(400)
-			.json({ error: "Missing start_at or end_at parameter" });
-
-	const url = `https://services.rainbet.com/v1/external/affiliates?start_at=${start_at}&end_at=${end_at}&key=${process.env.RAINBET_API_KEY}`;
-	try {
-		const response = await fetch(url);
-		const content = await response.text();
-		if (!response.ok) throw new Error(content);
-		res.json(JSON.parse(content));
-	} catch (error) {
-		res.status(500).json({ error: "Failed to fetch affiliates data" });
-	}
-});
-
 // Health Check
-app.get("/health", (req, res) => {
-	res.status(200).json({ status: "OK", message: "Server is running" });
-});
+app.get("/health", (req, res) =>
+	res.status(200).json({ status: "OK", message: "Server is running" })
+);
 
 // ----------------------
 // Start Server
 // ----------------------
-app.listen(PORT, () =>
-	console.log(`✅ Server is running at http://localhost:${PORT}`)
-);
+app.listen(PORT, () => {
+	console.log(`✅ Server is running at http://localhost:${PORT}`);
+	// Initial fetch to populate Chicken leaderboard
+	fetchAndStoreChickenData().catch((err) =>
+		console.error("Initial Chicken fetch failed:", err)
+	);
+});
