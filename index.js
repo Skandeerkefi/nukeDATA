@@ -7,7 +7,7 @@ import bcrypt from "bcryptjs";
 import cron from "node-cron";
 import axios from "axios";
 import fetch from "node-fetch";
-
+import chkRoutes from "./routes/chkRoutes.js";
 import { fetchReferrals } from "./controllers/referralsController.js";
 import { drawWinnerAuto } from "./controllers/gwsController.js";
 
@@ -111,8 +111,6 @@ cron.schedule("* * * * *", async () => {
 	}
 });
 
-
-
 // ----------------------
 // Auth Routes
 // ----------------------
@@ -195,27 +193,7 @@ app.get("/api/affiliates", async (req, res) => {
 
 // XP Leaderboard API
 // XP Leaderboard API
-app.get("/api/chk", async (req, res) => {
-	try {
-		const { minTime, maxTime } = req.query;
-		let filter = {};
-
-		if (minTime || maxTime) {
-			filter.referredAt = {};
-			if (minTime) filter.referredAt.$gte = parseInt(minTime);
-			if (maxTime) filter.referredAt.$lte = parseInt(maxTime);
-		}
-
-		const leaderboard = await Referral.find(filter)
-			.sort({ xp: -1 })
-			.limit(50)
-			.select("-__v");
-
-		res.json(leaderboard);
-	} catch (err) {
-		res.status(500).json({ error: err.message });
-	}
-});
+app.use("/api/chk", chkRoutes);
 
 // Health Check
 app.get("/health", (req, res) => {
