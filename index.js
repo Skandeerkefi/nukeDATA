@@ -1,33 +1,32 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import mongoose from "mongoose";
-import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
-import cron from "node-cron";
-import axios from "axios";
-import fetch from "node-fetch";
-import chkRoutes from "./routes/chkRoutes.js";
-import { fetchReferrals } from "./controllers/referralsController.js";
-import { drawWinnerAuto } from "./controllers/gwsController.js";
-
-import GWS from "./models/GWS.js";
-import Referral from "./models/Referral.js";
-import { User } from "./models/User.js";
-import { SlotCall } from "./models/SlotCall.js";
-
-import { verifyToken, isAdmin } from "./middleware/auth.js";
-import slotCallRoutes from "./routes/slotCallRoutes.js";
-import gwsRoutes from "./routes/gwsRoutes.js";
-import leaderboardRoutes from "./routes/leaderboard.js";
-import referralRoutes from "./routes/referrals.js";
+// server.js
+const express = require("express");
+const cors = require("cors");
+const dotenv = require("dotenv");
+const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const cron = require("node-cron");
+const { fetchAndStoreChickenData } = require("./controllers/chickenController");
 dotenv.config();
+
+// Controllers & Models
+const { drawWinnerAuto } = require("./controllers/gwsController");
+const GWS = require("./models/GWS");
+const { User } = require("./models/User");
+const { SlotCall } = require("./models/SlotCall");
+
+// Middleware
+const { verifyToken, isAdmin } = require("./middleware/auth");
+
+// Routes
+const slotCallRoutes = require("./routes/slotCallRoutes");
+const gwsRoutes = require("./routes/gwsRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ----------------------
-// CORS Configuration
+// CORS Middleware
 // ----------------------
 const allowedOrigins = [
 	"http://localhost:5173",
@@ -50,6 +49,9 @@ app.use(
 	})
 );
 
+// ----------------------
+// JSON Parsing Middleware
+// ----------------------
 app.use(express.json());
 
 // ----------------------
@@ -73,7 +75,7 @@ mongoose
 	.catch((err) => console.error("❌ MongoDB connection error:", err));
 
 // ----------------------
-// Request Logging
+// Logging Middleware
 // ----------------------
 app.use((req, res, next) => {
 	console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
@@ -88,6 +90,13 @@ app.use((req, res, next) => {
 	next();
 });
 
+// Update Chicken leaderboard every 1 minute
+cron.schedule("*/1 * * * *", async () => {
+	console.log("Running Chicken leaderboard update...");
+	await fetchAndStoreChickenData();
+});
+const chickenRoutes = require("./routes/chickenRoutes");
+app.use("/api/chicken", chickenRoutes);
 // ----------------------
 // Cron Jobs
 // ----------------------
@@ -112,13 +121,14 @@ cron.schedule("* * * * *", async () => {
 });
 
 // ----------------------
-// Auth Routes
+// Routes
 // ----------------------
+
+// Auth Routes
 app.post("/api/auth/register", async (req, res) => {
 	try {
 		const { kickUsername, rainbetUsername, password, confirmPassword } =
 			req.body;
-
 		if (password !== confirmPassword)
 			return res.status(400).json({ message: "Passwords do not match." });
 
@@ -165,12 +175,11 @@ app.post("/api/auth/login", async (req, res) => {
 	}
 });
 
-// ----------------------
-// Routes
-// ----------------------
+// Slot Call Routes
 app.use("/api/slot-calls", slotCallRoutes);
+
+// GWS Routes
 app.use("/api/gws", gwsRoutes);
-app.use("/api/leaderboard", leaderboardRoutes);
 
 // Affiliates Route
 app.get("/api/affiliates", async (req, res) => {
@@ -191,32 +200,14 @@ app.get("/api/affiliates", async (req, res) => {
 	}
 });
 
-// XP Leaderboard API
-// XP Leaderboard API
-app.use("/api/chk", chkRoutes);
-app.use("/api/referrals", referralRoutes);
 // Health Check
 app.get("/health", (req, res) => {
-	res.status(200).json({ status: "OK", message: "KingDATA API is running" });
-});
-cron.schedule("*/5 * * * *", async () => {
-	console.log("🕔 Running scheduled fetch for Chicken referrals...");
-	await fetchReferrals();
+	res.status(200).json({ status: "OK", message: "Server is running" });
 });
 
 // ----------------------
 // Start Server
 // ----------------------
-mongoose.connection.once("open", async () => {
-	console.log("✅ MongoDB connection ready. Starting server...");
-
-	app.listen(PORT, async () => {
-		console.log(`🚀 Server running on port ${PORT}`);
-
-		// Wait a bit to ensure all models are ready
-		setTimeout(async () => {
-			console.log("🌐 Fetching initial referrals...");
-			await fetchReferrals(); // initial sync
-		}, 2000); // 2-second delay just to be safe
-	});
-});
+app.listen(PORT, () =>
+	console.log(`✅ Server is running at http://localhost:${PORT}`)
+);
