@@ -20,7 +20,7 @@ import { verifyToken, isAdmin } from "./middleware/auth.js";
 import slotCallRoutes from "./routes/slotCallRoutes.js";
 import gwsRoutes from "./routes/gwsRoutes.js";
 import leaderboardRoutes from "./routes/leaderboard.js";
-
+import referralRoutes from "./routes/referrals.js";
 dotenv.config();
 
 const app = express();
