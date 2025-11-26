@@ -15,14 +15,20 @@ router.get("/leaderboard", async (req, res) => {
       skip: 0
     });
 
-    const response = await fetch(`https://api.csgowin.com/apic/affiliate/external?${params.toString()}`, {
-      headers: { "x-apikey": "0b08932086" }
-    });
+    const response = await fetch(
+      `https://api.csgowin.com/apic/affiliate/external?${params.toString()}`,
+      { headers: { "x-apikey": "0b08932086" } }
+    );
 
-    const text = await response.text();
-    console.log("CSGO API response:", text);
+    // Check if response is JSON
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+      const text = await response.text();
+      console.error("CSGO API returned non-JSON response:", text);
+      return res.status(502).json({ message: "CSGO API returned invalid response" });
+    }
 
-    const data = JSON.parse(text); // parse after confirming it is JSON
+    const data = await response.json();
     return res.json(data);
 
   } catch (error) {
@@ -30,6 +36,5 @@ router.get("/leaderboard", async (req, res) => {
     return res.status(500).json({ message: "Failed to fetch CSGO leaderboard" });
   }
 });
-
 
 module.exports = router;
