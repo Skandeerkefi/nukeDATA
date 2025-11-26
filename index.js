@@ -7,7 +7,7 @@ const bcrypt = require("bcryptjs");
 const cron = require("node-cron");
 const fetch = require("node-fetch"); // Use node-fetch in Node.js
 require("dotenv").config();
-
+const csgoRoutes = require("./routes/csgoRoutes");
 const { fetchAndStoreChickenData } = require("./controllers/chickenController");
 const { drawWinnerAuto } = require("./controllers/gwsController");
 const GWS = require("./models/GWS");
@@ -157,6 +157,7 @@ cron.schedule("* * * * *", async () => {
 // ----------------------
 // Routes
 // ----------------------
+app.use("/api/csgo", csgoRoutes);
 app.use("/api/slot-calls", slotCallRoutes);
 app.use("/api/gws", gwsRoutes);
 app.use("/api/chicken", chickenRoutes);
