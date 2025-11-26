@@ -4,37 +4,51 @@ const fetch = require("node-fetch");
 
 // GET /api/csgo/leaderboard
 router.get("/leaderboard", async (req, res) => {
-  try {
-    const params = new URLSearchParams({
-      code: "degenbomber",
-      gt: new Date("2023-01-01").getTime(), // realistic timestamp
-      lt: Date.now(),
-      by: "wager",
-      sort: "desc",
-      take: 10,
-      skip: 0
-    });
+    try {
+        // Correct timestamp: Jan 1, 2025 UTC
+        const gt = new Date("2025-01-01T00:00:00Z").getTime();
+        const lt = Date.now();
 
-    const response = await fetch(
-      `https://api.csgowin.com/apic/affiliate/external?${params.toString()}`,
-      { headers: { "x-apikey": "108adfb76a" } }
-    );
+        const params = new URLSearchParams({
+            code: "degenbomber",
+            gt: gt.toString(),
+            lt: lt.toString(),
+            by: "wager",
+            sort: "desc",
+            search: "",
+            take: "10",
+            skip: "0"
+        });
 
-    // Check if response is JSON
-    const contentType = response.headers.get("content-type");
-    if (!contentType || !contentType.includes("application/json")) {
-      const text = await response.text();
-      console.error("CSGO API returned non-JSON response:", text);
-      return res.status(502).json({ message: "CSGO API returned invalid response" });
+        const url = `https://api.csgowin.com/api/affiliate/external?${params.toString()}`;
+
+        const response = await fetch(url, {
+            headers: { "x-apikey": "0b08932086" }
+        });
+
+        // Detect HTML error responses (the reason your old code crashed)
+        const text = await response.text();
+
+        if (!response.ok) {
+            console.error("❌ Remote API responded with error:", text);
+            return res.status(502).json({ message: "Remote API error" });
+        }
+
+        // Try parsing JSON safely
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (err) {
+            console.error("❌ Invalid JSON returned:", text);
+            return res.status(500).json({ message: "Invalid JSON from CSGOWin" });
+        }
+
+        return res.json(data);
+
+    } catch (error) {
+        console.error("❌ CSGO leaderboard error:", error);
+        res.status(500).json({ message: "Failed to fetch CSGO leaderboard" });
     }
-
-    const data = await response.json();
-    return res.json(data);
-
-  } catch (error) {
-    console.error("❌ CSGO leaderboard error:", error);
-    return res.status(500).json({ message: "Failed to fetch CSGO leaderboard" });
-  }
 });
 
 module.exports = router;
