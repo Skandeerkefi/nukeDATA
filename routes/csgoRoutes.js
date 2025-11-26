@@ -17,7 +17,7 @@ router.get("/leaderboard", async (req, res) => {
 
     const response = await fetch(
       `https://api.csgowin.com/apic/affiliate/external?${params.toString()}`,
-      { headers: { "x-apikey": "0b08932086" } }
+      { headers: { "x-apikey": "108adfb76a" } }
     );
 
     // Check if response is JSON
